@@ -70,6 +70,8 @@ metadata:
 
 有 cast.json（novel-characters 的产出）也带上——校验「提示词不含角色名」要用。
 
+**项目根目录存在 `production-bible.json` 或 `production-bible.md` 时先读它。** 应用其中的画面质量、受控旧化、物理交互和场景状态连续性约束；场景事实、锚点和光照状态仍以 art.json 为准。项目特有的审美不得写回通用 skill。
+
 ### Step 1 — seed 骨架（有 outline.json 才有这步）
 
 ```bash

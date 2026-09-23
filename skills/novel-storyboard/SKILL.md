@@ -69,6 +69,8 @@ metadata:
 - `--art`：报告里 S01 显示成场景名 + 批次单嵌场景设定图
 - `--shots <卡片目录>`：**可选**挂载 shot-recipes 的镜头配方卡库（指向 `shot-recipes/references/cards`，只接受目录不接受导出的 JSON），开第 17 道 `shot-recipe` 门。没装 shot-recipes 就别给——本 skill 自包含，不依赖它
 
+项目根目录若有 `production-bible.json` 或 `production-bible.md`，先读取与镜头有关的视觉质量、人物调度、身份连续性、空间状态和投产规范。它是跨资产约束来源，不替代 script / cast / art / storyboard 的事实数据；详情见 `novel-production-bible` skill。
+
 **一次切几集**：跟剧本的批次走（剧本写到哪就分到哪），默认一批 ≤ 3 集。
 
 ### Step 1 — seed 工作底稿

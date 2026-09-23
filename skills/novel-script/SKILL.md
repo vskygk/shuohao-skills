@@ -70,6 +70,8 @@ metadata:
 - `--outline`：角色引用对账 + 爽点认领检查 + 报告里 C01 显示成人名
 - `--art`：场景/光照状态/道具对账 + 报告里 S01 显示成场景名
 
+项目根目录若有 `production-bible.json` 或 `production-bible.md`，先读取与剧本有关的空间进入/离开逻辑、状态变化和口语化代号约定。它只补充可拍性；人物、场景和剧情事实仍由上游 JSON 管理。
+
 ### Step 1 — seed 骨架
 
 ```bash

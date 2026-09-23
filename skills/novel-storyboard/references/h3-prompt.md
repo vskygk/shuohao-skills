@@ -1,6 +1,6 @@
 # H3 视频提示词 · 写法规范（内化版）
 
-方法论学自 MiniMax-H3 官方提示词指南（I2VA / 多图对齐模式），**内化成本 skill 自带文档——不依赖任何外部 skill**。写每段的 `h3Prompt` 照这份做，结构部分有质量门逐字对账。
+方法论学自 MiniMax-H3 官方提示词指南（I2VA 与 Ref2VA），**内化成本 skill 自带文档——不依赖任何外部 skill**。写每段的 `h3Prompt` 照这份做，结构部分有质量门逐字对账。
 
 ## 语言分工
 
@@ -9,6 +9,8 @@
 - `promptLang: 'zh'` 可切整条中文（对齐指令、字段名、镜头标记都有中文版，人名放行）——偏离官方推荐的备选项，实测中文效果不稳就回英文
 
 ## 结构（validate 逐字对账的部分）
+
+旧 I2VA 多图对齐包可使用下面的三字段结构。带多张具体关键帧、角色/场景/音色参考的投产包优先使用后面的 Ref2VA 六段式；两种格式均受校验器支持，但不要在同一段混用。
 
 ```text
 How the reference pictures align with the target video — Picture 1 (from Shot 1) aligns with the 0.00-second mark of the target video; Picture 2 (from Shot 2) aligns with the 3.00-second mark of the target video; ….
@@ -26,6 +28,37 @@ non_diegetic_music: 1–3 句英文写配器与速度（角色听不见、只有
 中文模式（promptLang=zh）的对应 token：`参考图与目标视频的对齐——` / `整体视听描述：` / `[镜头 k] 于 00:0X.XXX，`，配乐没有写「无」。
 
 首行对齐指令和切点时刻**由分镜秒数推导**，改了秒数忘改提示词，validate 当场拦。
+
+## Ref2VA 六段式（推荐用于关键帧投产）
+
+```text
+subject_definitions:
+<Subject 1> is the reusable character or environment reference.
+<Picture 1> is the concrete keyframe and composition lock for [Shot 1] at 00:00.000, defining viewpoint, screen direction, subject placement, and spatial layout.
+<Picture 2> is the concrete keyframe and composition lock for [Shot 2] at 00:03.000, defining viewpoint, screen direction, subject placement, and spatial layout.
+<Audio 1> is the voice-timbre reference for <Subject 1> (S1).
+
+summary:
+[keyframe completion + reference generation + audio reference] …
+
+retention_analysis:
+<Picture 1> ([Shot 1] keyframe at 00:00.000): fully_preserved - …
+<Audio 1>: reference - … without copying the source signal.
+
+detailed_description:
+Segment-wide visual rules for every shot: …
+[Shot 1] The shot begins from <Picture 1> …
+[Shot 2] At 00:03.000, the camera cuts to <Picture 2>, the locked keyframe for this cut: …
+
+overall_soundscape: …
+
+non_diegetic_music: …
+```
+
+- 每个供 H3 挂载的 `<Picture N>` 都必须独立定义，并且在对应 `[Shot N]` 中引用；其时间等于前面分镜秒数的累计。
+- 段级公共约束写在 `detailed_description` 的镜头之前，不能只塞进 `[Shot 1]`。
+- `<Audio N>` 只描述音色参考或信号复用关系。上传顺序、文件路径和时长属于 `prompt.md` 的分隔线**之前**的投产材料区，不属于模型提示词正文。
+- 若角色出现对白或情绪特写，允许 45° 可读面部特写，但眼神必须指向场内人、物、威胁或界面；除非剧情明确要求，不得直视镜头。
 
 ## 运镜
 

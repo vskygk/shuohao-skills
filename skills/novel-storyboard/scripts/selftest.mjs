@@ -118,6 +118,25 @@ eq(paramsOf({ params: { maxCutSeconds: 4 } }).maxCutSeconds, 4, '分镜上限可
 ok(gateReport(FIXTURE, CTX).every((g) => g.ok), '样例带全部上游全部门通过');
 eq(gateReport(FIXTURE, CTX).length, 17, '十七道门');
 {
+  const doc = clone(FIXTURE);
+  for (const seg of doc.episodes.flatMap((ep) => ep.segments)) {
+    const old = seg.h3Prompt;
+    const body = old.slice(old.indexOf('integrated_multimodal_description:') + 'integrated_multimodal_description:'.length, old.indexOf('overall_soundscape:')).trim();
+    const soundscape = old.slice(old.indexOf('overall_soundscape:'), old.indexOf('non_diegetic_music:')).trim();
+    const music = old.slice(old.indexOf('non_diegetic_music:')).trim();
+    const starts = cutStarts(seg.cuts);
+    const pictures = seg.cuts.map((_, i) => `<Picture ${i + 1}> is the concrete keyframe and composition lock for [Shot ${i + 1}] at ${h3CutTime(starts[i])}.`).join('\n');
+    const retention = seg.cuts.map((_, i) => `<Picture ${i + 1}> ([Shot ${i + 1}] keyframe): fully_preserved - composition and spatial layout remain locked.`).join('\n');
+    let detailed = body.replace('[Shot 1]', '[Shot 1] The shot uses <Picture 1> as its locked keyframe.');
+    for (let i = 2; i <= seg.cuts.length; i++) {
+      detailed = detailed.replace(new RegExp(`(\\[Shot ${i}\\] At [^\\n]*?,)`), `$1 The shot uses <Picture ${i}> as its locked keyframe.`);
+    }
+    seg.h3Prompt = `subject_definitions:\n${pictures}\n\nsummary:\n[keyframe completion + reference generation] A keyframed segment.\n\nretention_analysis:\n${retention}\n\ndetailed_description:\nSegment-wide continuity rules apply to every shot.\n${detailed}\n\n${soundscape}\n\n${music}`;
+  }
+  const refGate = gate(doc, 'h3-structure');
+  ok(refGate.ok, `Ref2VA 六段式的关键帧定义、引用和切点通过校验：${refGate.detail}`);
+}
+{
   const gates = gateReport(FIXTURE, {});
   ok(gates.every((g) => g.ok), '不带上游也通过（对账门跳过）');
   ok(gates.find((g) => g.id === 'coverage').detail.includes('跳过'), '跳过要明说，不静默');
@@ -521,6 +540,9 @@ eq(GATE_LOG, '.gates.jsonl', '日志文件名固定');
   ok(pack.files.some((f) => f.path === 'E01-01/prompt.md'), '每段一个文件夹里的 prompt.md');
   const p01 = pack.files.find((f) => f.path === 'E01-01/prompt.md');
   ok(p01.content.startsWith('# E01-01 · H3 提示词'), 'prompt.md 带标题');
+  ok(p01.content.includes('生成时长 = **15.0 秒**'), 'prompt.md 明确生成时长');
+  ok(p01.content.includes('Target video duration = **15.0 seconds**'), 'prompt.md 同步英文生成时长');
+  ok(p01.content.includes('音色参考上传顺序'), '材料区包含音色上传顺序');
   ok(p01.content.includes('Picture 1 = f1.png（**首帧**，钉 0.00 秒）'), '明确指定哪个文件是首帧');
   ok(p01.content.includes('Picture 4 = f4.png（钉 10.00 秒）'), '每张图的切点秒数写明');
   ok(p01.content.includes('---\n\nHow the reference pictures align'), '分隔线以下是 h3Prompt 原样（官方英文口径）');
@@ -530,6 +552,17 @@ eq(GATE_LOG, '.gates.jsonl', '日志文件名固定');
   eq(m.cutStarts.join(','), '0,3,6,10', 'manifest 带切点时刻表');
   eq(m.missing.length, 4, '缺图逐张标注');
   ok(pack.missingTotal > 0, '缺图总数上报');
+}
+{
+  const doc = clone(FIXTURE);
+  doc.episodes[0].segments[0].audioReferences = [{
+    audioId: 'Audio 1', characterId: 'C01', speakerId: 'S1', file: 'audio/C01.wav', role: 'timbre reference only',
+  }];
+  const pack = exportPack(doc, SCRIPT, { imageExists: () => true });
+  const p01 = pack.files.find((f) => f.path === 'E01-01/prompt.md');
+  ok(p01.content.includes('Audio 1 = audio/C01.wav · C01 / S1'), '音色文件只列在分隔线之前的材料区');
+  const m = pack.manifest.find((x) => x.segment === 'E01-01');
+  eq(m.audioReferences[0].speakerId, 'S1', 'manifest 保留音色参考元数据');
 }
 {
   const pack = exportPack(FIXTURE, SCRIPT, { imageExists: () => true, dir: 'out' });

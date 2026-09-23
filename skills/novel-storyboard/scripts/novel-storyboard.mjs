@@ -90,6 +90,14 @@ const r1 = (n) => Math.round(n * 10) / 10;
 export const H3_I2VA_LINE =
   'For the target video, at 0.00 seconds into the target video, <Picture 1> (from [Shot 1]) is fully referenced.';
 export const H3_FIELDS = ['integrated_multimodal_description:', 'overall_soundscape:', 'non_diegetic_music:'];
+export const H3_REF_FIELDS = [
+  'subject_definitions:',
+  'summary:',
+  'retention_analysis:',
+  'detailed_description:',
+  'overall_soundscape:',
+  'non_diegetic_music:',
+];
 
 /** 骨架 token 按语言取：默认英文（官方规范口径）；'zh' 整条中文（只保留 <d>[Chinese] 和 (S1) 两个模型级 token）。 */
 export const H3_TOKENS = {
@@ -151,12 +159,18 @@ export function h3Remainder(prompt) {
     .replace(/"[^"\n]*"/g, ' ');
 }
 
+/** Ref2VA 使用六段式；保留 I2VA，确保历史项目可以继续校验。 */
+export function h3PromptMode(prompt) {
+  return /^\s*subject_definitions:/m.test(String(prompt ?? '')) ? 'ref2va' : 'i2va';
+}
+
 /** 把 h3Prompt 的描述正文按 [镜头 k] / [Shot k] 切成每个分镜自己的段落。 */
 export function h3CutSlices(prompt, cutCount, lang = 'en') {
-  const tk = H3_TOKENS[lang] ?? H3_TOKENS.zh;
   const h3 = String(prompt ?? '');
-  const bodyStart = h3.indexOf(tk.fields[0]);
-  const bodyEnd = h3.indexOf(tk.fields[1]);
+  const isRef = h3PromptMode(h3) === 'ref2va';
+  const tk = H3_TOKENS[lang] ?? H3_TOKENS.zh;
+  const bodyStart = h3.indexOf(isRef ? 'detailed_description:' : tk.fields[0]);
+  const bodyEnd = h3.indexOf(isRef ? 'overall_soundscape:' : tk.fields[1]);
   if (bodyStart < 0) return [];
   const body = h3.slice(bodyStart, bodyEnd < 0 ? undefined : bodyEnd);
   const slices = [];
@@ -467,21 +481,43 @@ export function gateReport(board, ctx = {}) {
       }
 
       const h3 = String(seg?.h3Prompt ?? '');
-      // H3 结构：首行对齐指令逐字对账（由分镜结构按 promptLang 推导），三字段按序，切点时刻逐个对
+      // H3 结构：兼容历史 I2VA 与 Ref2VA 六段式，切点都由分镜结构推导。
       const tk = H3_TOKENS[promptLang] ?? H3_TOKENS.zh;
-      const wantLine = h3AlignmentLine(cuts, promptLang);
-      if (!h3.trimStart().startsWith(wantLine)) {
-        bad.h3s.push(`${sid} 首行对齐指令和分镜结构对不上（promptLang=${promptLang}）`);
-      } else {
-        const idx = tk.fields.map((f) => h3.indexOf(f));
-        if (idx.some((i) => i < 0) || !(idx[0] < idx[1] && idx[1] < idx[2])) {
-          bad.h3s.push(`${sid} 三个核心字段缺失或顺序不对`);
-        } else {
-          const starts = cutStarts(cuts);
-          if (h3.indexOf(tk.shot(1), idx[0]) < 0) bad.h3s.push(`${sid} 描述正文缺 ${tk.shot(1)}`);
-          for (let k = 2; k <= cuts.length; k++) {
+      const isRef = h3PromptMode(h3) === 'ref2va';
+      if (isRef) {
+        const idx = H3_REF_FIELDS.map((f) => h3.indexOf(f));
+        if (idx.some((i) => i < 0) || !idx.every((v, i) => i === 0 || idx[i - 1] < v)) {
+          bad.h3s.push(`${sid} Ref2VA 六字段缺失或顺序不对`);
+        }
+        const starts = cutStarts(cuts);
+        const slices = h3CutSlices(h3, cuts.length, promptLang);
+        for (let k = 1; k <= cuts.length; k++) {
+          const picture = `<Picture ${k}>`;
+          const shot = tk.shot(k);
+          const pictureDef = new RegExp(`^${picture.replace(/[<>]/g, '\\$&')}\\s+is\\s+.*${shot.replace(/[\[\]]/g, '\\$&')}`, 'm');
+          if (!pictureDef.test(h3)) bad.h3s.push(`${sid} 缺 ${picture} 对应 ${shot} 的独立关键帧锚点定义`);
+          const slice = slices[k - 1] ?? '';
+          if (!slice.includes(picture)) bad.h3s.push(`${sid} 的 ${shot} 未引用 ${picture}`);
+          if (k > 1) {
             const mark = tk.cutMark(k, h3CutTime(starts[k - 1]));
-            if (h3.indexOf(mark, idx[0]) < 0) bad.h3s.push(`${sid} 缺「${mark}」——切点时刻必须等于前面分镜秒数的累计`);
+            if (!slice.includes(mark)) bad.h3s.push(`${sid} 缺「${mark}」——切点时刻必须等于前面分镜秒数的累计`);
+          }
+        }
+      } else {
+        const wantLine = h3AlignmentLine(cuts, promptLang);
+        if (!h3.trimStart().startsWith(wantLine)) {
+          bad.h3s.push(`${sid} 首行对齐指令和分镜结构对不上（promptLang=${promptLang}）`);
+        } else {
+          const idx = tk.fields.map((f) => h3.indexOf(f));
+          if (idx.some((i) => i < 0) || !(idx[0] < idx[1] && idx[1] < idx[2])) {
+            bad.h3s.push(`${sid} 三个核心字段缺失或顺序不对`);
+          } else {
+            const starts = cutStarts(cuts);
+            if (h3.indexOf(tk.shot(1), idx[0]) < 0) bad.h3s.push(`${sid} 描述正文缺 ${tk.shot(1)}`);
+            for (let k = 2; k <= cuts.length; k++) {
+              const mark = tk.cutMark(k, h3CutTime(starts[k - 1]));
+              if (h3.indexOf(mark, idx[0]) < 0) bad.h3s.push(`${sid} 缺「${mark}」——切点时刻必须等于前面分镜秒数的累计`);
+            }
           }
         }
       }
@@ -657,7 +693,7 @@ export function gateReport(board, ctx = {}) {
   add('segment-id', '段号 E01-01 格式、按顺序连号', bad.id.length === 0, bad.id.join('；'));
   add('size-phrase', '景别短语写进分镜图提示词', bad.size.length === 0, bad.size.join('；'));
   add('camera-phrase', '运镜用 H3 官方词表，且出现在自己的 [Shot k] 段落里', bad.camera.length === 0, bad.camera.join('；'));
-  add('h3-structure', 'H3 首行对齐指令由分镜结构推导逐字对账，切点时刻逐个对', eps.length > 0 && bad.h3s.length === 0, bad.h3s.join('；'));
+  add('h3-structure', 'H3 结构、关键帧锚点和切点时刻与分镜逐个对账（兼容 I2VA / Ref2VA）', eps.length > 0 && bad.h3s.length === 0, bad.h3s.join('；'));
   add('h3-dialogue', '认领节拍的台词逐字进 H3 提示词的 <d> 块', bad.h3d.length === 0, script ? bad.h3d.join('；') : SKIP_SCRIPT);
   add('h3-lang', `H3 提示词语言与设定一致（promptLang=${promptLang}，正文${promptLang === 'en' ? '全英文' : '中文'}、骨架 token 官方英文格式）`, bad.h3e.length === 0, bad.h3e.join('；'));
   add('style-phrase', `分镜图风格短语统一（${style ? `${styleId}：${style.phrase}` : '预设无效'}）——同剧不许画风漂`, bad.style.length === 0, bad.style.join('；'));
@@ -762,9 +798,9 @@ export function seedFromScript(script, epRange = null) {
 /* ------------------------------------------------------------------ */
 /*
  * 固定投产结构：每段一个文件夹——E01-01/f1.png … fN.png + prompt.md
- * （h3Prompt 原样），根部一份 manifest：按 Picture 序列出该段要挂的
- * 分镜图路径、秒数、缺图标注。提示词就躺在图旁边，整个文件夹拖给
- * H3 就是一次生成。纯函数返回文件清单，落盘在 CLI 层——可测性。
+ * （h3Prompt 原样）。文件头保存人工挂载所需的时长、图片和音色顺序，
+ * 分隔线以下保持纯模型提示词；根部 manifest 记录素材路径、秒数和缺图标注。
+ * 整个文件夹拖给 H3 就是一次生成。纯函数返回文件清单，落盘在 CLI 层——可测性。
  */
 export function exportPack(board, script, { imageExists = () => false, dir = '.' } = {}) {
   const prefix = dir === '.' ? '' : `${dir}/`;
@@ -779,7 +815,12 @@ export function exportPack(board, script, { imageExists = () => false, dir = '.'
       const mapping = (seg.cuts ?? [])
         .map((_, i) => `- Picture ${i + 1} = f${i + 1}.png${i === 0 ? '（**首帧**，钉 0.00 秒）' : `（钉 ${starts[i].toFixed(2)} 秒）`}`)
         .join('\n');
-      const promptMd = `# ${seg.id} · H3 提示词\n\n首帧 = **f1.png**。图片按 Picture 序号挂载：\n\n${mapping}\n\n---\n\n${seg.h3Prompt ?? ''}\n`;
+      const duration = segSeconds(seg).toFixed(1);
+      const audioRefs = Array.isArray(seg.audioReferences) ? seg.audioReferences : [];
+      const audioMapping = audioRefs.length
+        ? audioRefs.map((a, i) => `- ${a.audioId ?? `Audio ${i + 1}`} = ${a.file ?? '（缺文件路径）'} · ${a.characterId ?? '未知角色'} / ${a.speakerId ?? '未知音色'}`).join('\n')
+        : '- 本段无音色参考文件。';
+      const promptMd = `# ${seg.id} · H3 提示词\n\n## 生成设置\n\n生成时长 = **${duration} 秒**（一次生成，不要自动延长）\nTarget video duration = **${duration} seconds** (generate one clip at this exact duration).\n\n## 图片上传顺序\n\n首帧 = **f1.png**。图片按 Picture 序号挂载：\n\n${mapping}\n\n## 音色参考上传顺序\n\n${audioMapping}\n\n> 上述内容仅用于 H3 工作流的材料挂载；请勿复制到下方模型提示词。\n\n---\n\n${seg.h3Prompt ?? ''}\n`;
       files.push({ path: `${prefix}${seg.id}/prompt.md`, content: promptMd });
       const pictures = (seg.cuts ?? []).map((_, i) => `${prefix}${seg.id}/f${i + 1}.png`);
       const missing = pictures.filter((rel) => !imageExists(rel));
@@ -791,6 +832,7 @@ export function exportPack(board, script, { imageExists = () => false, dir = '.'
         cutStarts: cutStarts(seg.cuts),
         prompt: `${prefix}${seg.id}/prompt.md`,
         pictures,
+        audioReferences: audioRefs,
         missing,
       });
     }

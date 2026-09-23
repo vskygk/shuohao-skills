@@ -57,6 +57,8 @@ metadata:
 
 **人物表从原文拆**——大纲是角色设定的上游，`characters` 块定下的分档、人物线与来源，下游 `novel-characters` 直接拿去当角色清单，不用再判断一遍谁重要。
 
+如果项目根目录已有 `production-bible.json` 或 `production-bible.md`，只读取会改变结构可拍性的项目约束，例如必须交代的边界跨越、角色入场路径或关键空间状态弧；不要把项目的视觉风格、角色形象或提示词偏好带入大纲。
+
 例外是用户手上已经有 `cast.json`（此前单独跑过 `novel-characters`）：那就拿来当人物原料，角色、别名、关系都是现成的，不用重拆原文。分档按 `importance` 反向映射：protagonist/major → `lead`，supporting → `support`，minor → `functional`。
 
 ### Step 1 — 定位输入

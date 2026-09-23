@@ -86,6 +86,8 @@ node {baseDir}/scripts/novel-characters.mjs styles   # 打印预设的完整内�
 
 确定输出目录：用户指定就用；没指定就用原书同级目录。
 
+**项目根目录存在 `production-bible.json` 或 `production-bible.md` 时先读它。** 只执行其中与角色有关的跨资产约束：同源脸部/变体的不可变特征、允许的区分项、图像质量规则和音色参考约定。具体角色事实仍以 outline / cast 为准；不要把项目规则反写进本 skill。
+
 **有 `outline.json`（novel-outline 的产出）就一起要过来，走 seed**——大纲是角色设定的上游，它的 `characters` 块已经定死了角色清单：
 
 ```bash
