@@ -365,6 +365,7 @@ export function computeStats(board, script) {
     let cutCount = 0;
     let withLines = 0;
     for (const seg of ep?.segments ?? []) {
+      const postCueKeys = new Set((seg?.postAudioCues ?? []).map((cue) => `${cue.cut}:${cue.beat}`));
       const scene = sEp?.scenes?.[seg.sceneIndex - 1];
       const secs = segSeconds(seg);
       total += secs;
@@ -376,7 +377,10 @@ export function computeStats(board, script) {
         for (const b of scene.beats.slice((from ?? 1) - 1, to ?? 0)) {
           if (b.kind !== 'line') continue;
           segHasLine = true;
-          dialogue.push({ segment: seg.id, cut: ci + 1, ep: ep.ep, speaker: b.speaker, line: b.text, seconds: b.seconds });
+          dialogue.push({
+            segment: seg.id, cut: ci + 1, ep: ep.ep, speaker: b.speaker, line: b.text, seconds: b.seconds,
+            delivery: postCueKeys.has(`${ci + 1}:${b.n}`) ? 'post' : 'h3',
+          });
         }
       });
       if (segHasLine) withLines++;
@@ -440,7 +444,7 @@ export function gateReport(board, ctx = {}) {
   const bad = {
     coverage: [], segCap: [], cutLen: [], fit: [], duration: [], crowd: [],
     id: [], size: [], camera: [], english: [], names: [], refs: [],
-    h3s: [], h3d: [], h3e: [], style: [], recipe: [],
+    h3s: [], h3d: [], h3e: [], postAudio: [], style: [], recipe: [],
   };
   // 配方卡库是可选挂载：ctx.recipes 为空就整门跳过（不是「没有 cut 带 recipe」就跳过）
   const recipes = ctx.recipes ?? null;
@@ -481,6 +485,18 @@ export function gateReport(board, ctx = {}) {
       }
 
       const h3 = String(seg?.h3Prompt ?? '');
+      const postCues = Array.isArray(seg?.postAudioCues) ? seg.postAudioCues : [];
+      const postCueByBeat = new Map();
+      const cueIds = new Set();
+      for (const cue of postCues) {
+        const cueId = String(cue?.cueId ?? '').trim();
+        const key = `${cue?.cut}:${cue?.beat}`;
+        if (!cueId) bad.postAudio.push(`${sid} 有后期画外音缺 cueId`);
+        else if (cueIds.has(cueId)) bad.postAudio.push(`${sid} 的 cueId「${cueId}」重复`);
+        cueIds.add(cueId);
+        if (postCueByBeat.has(key)) bad.postAudio.push(`${sid} 的 cut ${cue?.cut} / beat ${cue?.beat} 重复挂载后期画外音`);
+        postCueByBeat.set(key, cue);
+      }
       // H3 结构：兼容历史 I2VA 与 Ref2VA 六段式，切点都由分镜结构推导。
       const tk = H3_TOKENS[promptLang] ?? H3_TOKENS.zh;
       const isRef = h3PromptMode(h3) === 'ref2va';
@@ -609,12 +625,43 @@ export function gateReport(board, ctx = {}) {
               if (b.kind !== 'line') continue;
               dlg += b.seconds;
               const re = new RegExp(`<d>\\[[^\\]]+\\]\\s*${b.text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*</d>`);
-              if (!re.test(h3)) bad.h3d.push(`${sid} 的 h3Prompt 缺台词「${b.text.slice(0, 12)}…」的 <d> 块`);
+              const cue = postCueByBeat.get(`${ci + 1}:${b.n}`);
+              if (cue) {
+                if (re.test(h3)) bad.h3d.push(`${sid} 的后期画外音「${b.text.slice(0, 12)}…」仍残留在 H3 <d> 块`);
+              } else if (!re.test(h3)) {
+                bad.h3d.push(`${sid} 的 h3Prompt 缺台词「${b.text.slice(0, 12)}…」的 <d> 块`);
+              }
             }
             if (dlg > cut.seconds) bad.fit.push(`${cid} 台词 ${r1(dlg)} 秒装不进 ${cut.seconds} 秒`);
           }
         }
       });
+
+      // 后期画外音必须精确认领一个画外说话节拍，并完全离开 H3 正文与 H3 音色上传清单。
+      for (const cue of postCues) {
+        const ci = Number(cue?.cut) - 1;
+        const cut = cuts[ci];
+        const beat = scene?.beats?.[Number(cue?.beat) - 1];
+        const tag = `${sid}/${cue?.cueId ?? '?'}`;
+        if (!cut) {
+          bad.postAudio.push(`${tag} 指向不存在的 cut ${cue?.cut}`);
+          continue;
+        }
+        const [from, to] = cut.beats ?? [];
+        if (!beat || beat.kind !== 'line' || beat.n < from || beat.n > to) {
+          bad.postAudio.push(`${tag} 指向的 beat ${cue?.beat} 不是该切认领的台词节拍`);
+          continue;
+        }
+        if (cue.speaker !== beat.speaker || cue.line !== beat.text) bad.postAudio.push(`${tag} 的说话人或台词与剧本不一致`);
+        if ((cut.characters ?? []).includes(beat.speaker)) bad.postAudio.push(`${tag} 的说话人 ${beat.speaker} 在画内，不能标为画外音`);
+        const wantStart = cutStarts(cuts)[ci];
+        if (Math.abs(Number(cue.startSeconds) - wantStart) > 0.001) bad.postAudio.push(`${tag} 的 startSeconds 应为 ${wantStart}`);
+        if (Math.abs(Number(cue.durationSeconds) - Number(beat.seconds)) > 0.001) bad.postAudio.push(`${tag} 的 durationSeconds 应为 ${beat.seconds}`);
+        if (cue?.tts?.engine !== 'VoxCPM') bad.postAudio.push(`${tag} 的 tts.engine 必须为 VoxCPM`);
+        if (!String(cue?.tts?.outputFile ?? '').trim()) bad.postAudio.push(`${tag} 缺 tts.outputFile`);
+        const refSpeaker = new Set((seg?.audioReferences ?? []).map((a) => a.speakerId));
+        if (cue.speakerId && refSpeaker.has(cue.speakerId)) bad.postAudio.push(`${tag} 的 ${cue.speakerId} 仍在本段 H3 音色上传清单中`);
+      }
 
       // 多格配方靠「连续同 id 的 run」表达（不引入新结构）：卡片 cuts 下限 ≥ 2 时，
       // 连续段的长度不得小于该下限——单独挂一格的两格配方是没兑现的配方
@@ -694,7 +741,8 @@ export function gateReport(board, ctx = {}) {
   add('size-phrase', '景别短语写进分镜图提示词', bad.size.length === 0, bad.size.join('；'));
   add('camera-phrase', '运镜用 H3 官方词表，且出现在自己的 [Shot k] 段落里', bad.camera.length === 0, bad.camera.join('；'));
   add('h3-structure', 'H3 结构、关键帧锚点和切点时刻与分镜逐个对账（兼容 I2VA / Ref2VA）', eps.length > 0 && bad.h3s.length === 0, bad.h3s.join('；'));
-  add('h3-dialogue', '认领节拍的台词逐字进 H3 提示词的 <d> 块', bad.h3d.length === 0, script ? bad.h3d.join('；') : SKIP_SCRIPT);
+  add('h3-dialogue', '画内台词逐字进 H3 <d> 块；后期画外音不得进入 H3', bad.h3d.length === 0, script ? bad.h3d.join('；') : SKIP_SCRIPT);
+  add('post-audio', '后期画外音精确认领画外台词、对齐切点，并从 H3 正文与音色上传清单剥离', bad.postAudio.length === 0, script ? bad.postAudio.join('；') : SKIP_SCRIPT);
   add('h3-lang', `H3 提示词语言与设定一致（promptLang=${promptLang}，正文${promptLang === 'en' ? '全英文' : '中文'}、骨架 token 官方英文格式）`, bad.h3e.length === 0, bad.h3e.join('；'));
   add('style-phrase', `分镜图风格短语统一（${style ? `${styleId}：${style.phrase}` : '预设无效'}）——同剧不许画风漂`, bad.style.length === 0, bad.style.join('；'));
   add('prompt-english', '分镜图提示词全英文且非空', bad.english.length === 0, bad.english.join('；'));
@@ -799,13 +847,15 @@ export function seedFromScript(script, epRange = null) {
 /*
  * 固定投产结构：每段一个文件夹——E01-01/f1.png … fN.png + prompt.md
  * （h3Prompt 原样）。文件头保存人工挂载所需的时长、图片和音色顺序，
- * 分隔线以下保持纯模型提示词；根部 manifest 记录素材路径、秒数和缺图标注。
+ * 分隔线以下保持纯模型提示词；根部 manifest 记录素材路径、秒数和缺图标注，
+ * voiceover-manifest 汇总 VoxCPM 与剪辑使用的后期画外音线索。
  * 整个文件夹拖给 H3 就是一次生成。纯函数返回文件清单，落盘在 CLI 层——可测性。
  */
 export function exportPack(board, script, { imageExists = () => false, dir = '.' } = {}) {
   const prefix = dir === '.' ? '' : `${dir}/`;
   const files = [];
   const manifest = [];
+  const voiceovers = [];
   let missingTotal = 0;
   for (const ep of board?.episodes ?? []) {
     for (const seg of ep?.segments ?? []) {
@@ -817,10 +867,14 @@ export function exportPack(board, script, { imageExists = () => false, dir = '.'
         .join('\n');
       const duration = segSeconds(seg).toFixed(1);
       const audioRefs = Array.isArray(seg.audioReferences) ? seg.audioReferences : [];
+      const postAudioCues = Array.isArray(seg.postAudioCues) ? seg.postAudioCues : [];
       const audioMapping = audioRefs.length
         ? audioRefs.map((a, i) => `- ${a.audioId ?? `Audio ${i + 1}`} = ${a.file ?? '（缺文件路径）'} · ${a.characterId ?? '未知角色'} / ${a.speakerId ?? '未知音色'}`).join('\n')
         : '- 本段无音色参考文件。';
-      const promptMd = `# ${seg.id} · H3 提示词\n\n## 生成设置\n\n生成时长 = **${duration} 秒**（一次生成，不要自动延长）\nTarget video duration = **${duration} seconds** (generate one clip at this exact duration).\n\n## 图片上传顺序\n\n首帧 = **f1.png**。图片按 Picture 序号挂载：\n\n${mapping}\n\n## 音色参考上传顺序\n\n${audioMapping}\n\n> 上述内容仅用于 H3 工作流的材料挂载；请勿复制到下方模型提示词。\n\n---\n\n${seg.h3Prompt ?? ''}\n`;
+      const postAudioMapping = postAudioCues.length
+        ? postAudioCues.map((cue) => `- ${cue.cueId} · ${Number(cue.startSeconds).toFixed(2)}s · ${cue.speaker}:「${cue.line}」→ ${cue.tts?.outputFile ?? '（缺输出路径）'}`).join('\n')
+        : '- 本段无后期画外音。';
+      const promptMd = `# ${seg.id} · H3 提示词\n\n## 生成设置\n\n生成时长 = **${duration} 秒**（一次生成，不要自动延长）\nTarget video duration = **${duration} seconds** (generate one clip at this exact duration).\n\n## 图片上传顺序\n\n首帧 = **f1.png**。图片按 Picture 序号挂载：\n\n${mapping}\n\n## 音色参考上传顺序\n\n${audioMapping}\n\n## 后期画外音（不要上传 H3）\n\n${postAudioMapping}\n\n> 上述内容仅用于 H3 工作流的材料挂载与后期交接；请勿复制到下方模型提示词。\n\n---\n\n${seg.h3Prompt ?? ''}\n`;
       files.push({ path: `${prefix}${seg.id}/prompt.md`, content: promptMd });
       const pictures = (seg.cuts ?? []).map((_, i) => `${prefix}${seg.id}/f${i + 1}.png`);
       const missing = pictures.filter((rel) => !imageExists(rel));
@@ -833,12 +887,15 @@ export function exportPack(board, script, { imageExists = () => false, dir = '.'
         prompt: `${prefix}${seg.id}/prompt.md`,
         pictures,
         audioReferences: audioRefs,
+        postAudioCues,
         missing,
       });
+      for (const cue of postAudioCues) voiceovers.push({ segment: seg.id, ...cue });
     }
   }
   files.push({ path: `${prefix}manifest.json`, content: JSON.stringify(manifest, null, 2) + '\n' });
-  return { files, manifest, missingTotal };
+  files.push({ path: `${prefix}voiceover-manifest.json`, content: JSON.stringify(voiceovers, null, 2) + '\n' });
+  return { files, manifest, voiceovers, missingTotal };
 }
 
 /* ------------------------------------------------------------------ */
@@ -877,7 +934,8 @@ const GATE_LABELS_EN = {
   'size-phrase': 'Shot-size phrase present in the frame prompt',
   'camera-phrase': 'Camera move from the official H3 vocabulary, inside its own [Shot k] passage',
   'h3-structure': 'H3 alignment line derived from the cut structure, audited verbatim; cut times match',
-  'h3-dialogue': 'Claimed dialogue appears verbatim inside the H3 <d> blocks',
+  'h3-dialogue': 'On-screen dialogue appears verbatim in H3 <d> blocks; post-production voice-over stays outside H3',
+  'post-audio': 'Post-production voice-over cues claim off-screen lines exactly and stay outside H3 prompts and uploads',
   'h3-lang': 'Prompt language matches the promptLang setting',
   'style-phrase': 'Frame-prompt style phrase consistent — one drama, one look',
   'prompt-english': 'Frame prompts are English and non-empty',
@@ -944,7 +1002,8 @@ const I18N = {
     showSegs: '▾ 展开全部段',
     hideSegs: '▴ 收起',
     copy: '复制', copied: '已复制', copyFailed: '复制失败',
-    dialogueCols: ['段 · 切', '说话人', '台词', '台词秒数'],
+    dialogueCols: ['段 · 切', '说话人', '台词', '交付轨', '台词秒数'],
+    deliveryName: (mode) => mode === 'post' ? '后期 TTS' : 'H3 画内对白',
     cutCols: ['切', '起点', '秒', '景别', '运镜', '配方', '画面', '人物'],
     batchCols: ['场景', '光照', '段', '需要的角色', '道具'],
     atSec: (t) => `${t.toFixed(2)}s 起`,
@@ -1005,7 +1064,8 @@ const I18N = {
     showSegs: '▾ Show all segments',
     hideSegs: '▴ Collapse',
     copy: 'Copy', copied: 'Copied', copyFailed: 'Copy failed',
-    dialogueCols: ['Segment · cut', 'Speaker', 'Line', 'Seconds'],
+    dialogueCols: ['Segment · cut', 'Speaker', 'Line', 'Delivery', 'Seconds'],
+    deliveryName: (mode) => mode === 'post' ? 'Post-production TTS' : 'On-screen H3 dialogue',
     cutCols: ['Cut', 'Start', 'Sec', 'Size', 'Camera', 'Recipe', 'Picture', 'Characters'],
     batchCols: ['Scene', 'Lighting', 'Segments', 'Characters needed', 'Props'],
     atSec: (t) => `from ${t.toFixed(2)}s`,
@@ -1124,7 +1184,7 @@ export function renderMarkdown(board, ctx = {}) {
     out.push(mdRow([`${b.sceneId} ${n.scene(b.sceneId)}`, b.lighting, b.segments.join(t.listSep), b.characters.map(n.char).join(t.listSep), b.props.map(n.prop).join(t.listSep)]));
   }
   out.push('', `## ${t.secDialogue}`, '', mdHead(t.dialogueCols));
-  for (const d of stats.dialogue) out.push(mdRow([`${d.segment}#${d.cut}`, n.char(d.speaker), d.line, d.seconds]));
+  for (const d of stats.dialogue) out.push(mdRow([`${d.segment}#${d.cut}`, n.char(d.speaker), d.line, t.deliveryName(d.delivery), d.seconds]));
   out.push('');
   return out.join('\n');
 }
@@ -1302,7 +1362,7 @@ ${cards}
 
   // ---- 04 配音对齐单 ----
   const dlgRows = stats.dialogue
-    .map((d) => `<tr><td><a href="#seg-${esc(d.segment)}">${esc(d.segment)}</a> #${d.cut}</td><td>${esc(n.char(d.speaker))}</td><td class="serif">${esc(d.line)}</td><td>${d.seconds}</td></tr>`)
+    .map((d) => `<tr><td><a href="#seg-${esc(d.segment)}">${esc(d.segment)}</a> #${d.cut}</td><td>${esc(n.char(d.speaker))}</td><td class="serif">${esc(d.line)}</td><td>${esc(t.deliveryName(d.delivery))}</td><td>${d.seconds}</td></tr>`)
     .join('\n');
 
   const gateList = `<ul class="gate">
@@ -1655,7 +1715,7 @@ const USAGE = `novel-storyboard.mjs — novel-storyboard skill 的确定性工�
          [--lang zh|en]                       报告界面语言（默认 zh；未指定时读取 JSON 顶层 lang 字段）
          [--shots <卡片目录>]                  报告的「配方」列显示卡名并标注建议景别／运镜的偏离
   export <sb.json> --script <script.json>     导出 H3 投产包：每段一个文件夹 <段号>/prompt.md
-         [--out .]                            （分镜图 f1..fN.png 同住）+ 根部 manifest.json
+         [--out .]                            （分镜图 f1..fN.png 同住）+ 根部 manifest.json / voiceover-manifest.json
   stats                                       读当前目录的 .gates.jsonl，汇总哪道门最常响、
                                               哪道门从没响过（validate/checkup 会自动累积）
   slug <name>                                 剧名转安全文件名
@@ -1806,7 +1866,7 @@ function main(argv) {
       writeFileSync(resolve(f.path), f.content, 'utf8');
     }
     const segN = pack.manifest.length;
-    console.log(`✓ ${segN} 段投产包 → ${resolve(dir)}/（每段一个文件夹：分镜图 + prompt.md；根部 manifest.json）`);
+    console.log(`✓ ${segN} 段投产包 → ${resolve(dir)}/（每段一个文件夹：分镜图 + prompt.md；根部 manifest.json + voiceover-manifest.json）`);
     if (pack.missingTotal) console.log(`⚠️ 缺 ${pack.missingTotal} 张分镜图，已在 manifest 的 missing 里标注——喂 H3 前先补齐`);
     return;
   }

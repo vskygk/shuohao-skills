@@ -90,7 +90,7 @@ node {baseDir}/scripts/novel-storyboard.mjs seed <script.json> --eps 1-3 > <work
 
 流程：**先按剧情单元分段**（每段 9–15 秒、不跨场），**段内切 2–5 秒的分镜**（对话正反打、关键动作插入特写、进场三件套——切镜语法都在 storyboard-pass.md），每切写一条分镜图提示词。
 
-**每段写一条 `h3Prompt`**，照 `{baseDir}/references/h3-prompt.md` 写（官方方法论的内化版，**不依赖任何外部 skill**）。官方口径默认英文（`promptLang` 可切中文），**每个镜头独立一行**。要点：首行对齐指令和 `[Shot k]` 切点时刻**由分镜秒数推导，一个字符都不许漂**（validate 逐字对账）；认领台词**逐字**进 `<d>[Chinese] …</d>`；每切的运镜词写进自己那一行；声景与配乐分进后两个字段——**声景也是动作指令，画面改了声景一起改**。
+**每段写一条 `h3Prompt`**，照 `{baseDir}/references/h3-prompt.md` 写（官方方法论的内化版，**不依赖任何外部 skill**）。官方口径默认英文（`promptLang` 可切中文），**每个镜头独立一行**。要点：首行对齐指令和 `[Shot k]` 切点时刻**由分镜秒数推导，一个字符都不许漂**（validate 逐字对账）；画内人物实际开口的台词逐字进 `<d>[Chinese] …</d>`；不可靠的远程通讯、旁白、系统播报等画外音写入段级 `postAudioCues`，从 H3 正文和 H3 音色上传清单中完全剥离，交给 TTS 与后期；每切的运镜词写进自己那一行；声景与配乐分进后两个字段——**声景也是动作指令，画面改了声景一起改**。
 
 切完把 `seedScenes` 删掉。
 
@@ -140,6 +140,7 @@ node {baseDir}/scripts/novel-storyboard.mjs render <剧名>-storyboard.json --ht
 ├── <剧名>-storyboard.md
 ├── storyboard-report.html         ← 双击就能开
 ├── manifest.json                  ← export 生成
+├── voiceover-manifest.json        ← export 汇总 VoxCPM / 后期画外音线索
 └── E01-01/                        ← 一段一个文件夹 = 一次 H3 生成的全部材料
     ├── f1.png                     ← 主分镜图（有 codex 才有）
     ├── f2.png …                   ← 子分镜图

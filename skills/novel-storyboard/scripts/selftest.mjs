@@ -116,7 +116,7 @@ eq(paramsOf({ params: { maxCutSeconds: 4 } }).maxCutSeconds, 4, '分镜上限可
 /* ---------------- 质量门：全绿基线 ---------------- */
 
 ok(gateReport(FIXTURE, CTX).every((g) => g.ok), '样例带全部上游全部门通过');
-eq(gateReport(FIXTURE, CTX).length, 17, '十七道门');
+eq(gateReport(FIXTURE, CTX).length, 18, '十八道门');
 {
   const doc = clone(FIXTURE);
   for (const seg of doc.episodes.flatMap((ep) => ep.segments)) {
@@ -288,6 +288,28 @@ eq(gateReport(FIXTURE, CTX).length, 17, '十七道门');
   const g = gate(doc, 'h3-dialogue');
   ok(!g.ok, '台词没进 <d> 块被拦');
   ok(gate(doc, 'h3-dialogue', {}).detail.includes('跳过'), '没给剧本时本门跳过并明说');
+}
+// post-audio — 画外台词离开 H3，改由 VoxCPM 与后期接管
+{
+  const doc = clone(FIXTURE);
+  const seg = doc.episodes[0].segments[0];
+  const beat = e1.scenes[0].beats[2];
+  seg.cuts[2].characters = [];
+  seg.h3Prompt = seg.h3Prompt.replace(/, and the weathered old boatman[\s\S]*?<\/d>/, '. No dialogue is generated in this shot');
+  seg.postAudioCues = [{
+    cueId: 'E01-01-VO01', cut: 3, beat: 3, startSeconds: 6, durationSeconds: beat.seconds,
+    speaker: beat.speaker, speakerId: 'S1', line: beat.text, delivery: 'off-screen',
+    tts: { engine: 'VoxCPM', mode: 'voice-reference', referenceFile: 'audio/C03.wav', voicePrompt: 'weathered male voice', outputFile: 'audio/post-voiceover/E01-01-VO01.wav' },
+  }];
+  ok(gate(doc, 'h3-dialogue').ok, '已登记后期画外音后，台词不再强制进入 H3');
+  ok(gate(doc, 'post-audio').ok, '合法后期画外音通过专门质量门');
+  eq(computeStats(doc, SCRIPT).dialogue.find((d) => d.line === beat.text).delivery, 'post', '配音对齐单标记为后期 TTS');
+  const leaked = clone(doc);
+  leaked.episodes[0].segments[0].h3Prompt += ` <d>[Chinese] ${beat.text}</d>`;
+  ok(!gate(leaked, 'h3-dialogue').ok, '后期画外音残留 H3 会被拦');
+  const mistimed = clone(doc);
+  mistimed.episodes[0].segments[0].postAudioCues[0].startSeconds = 5;
+  ok(!gate(mistimed, 'post-audio').ok, '后期画外音切点错位会被拦');
 }
 // h3-lang — 语言与设定双向对账（默认英文 = 官方口径）
 {
@@ -536,8 +558,9 @@ eq(GATE_LOG, '.gates.jsonl', '日志文件名固定');
 
 {
   const pack = exportPack(FIXTURE, SCRIPT, { imageExists: () => false });
-  eq(pack.files.length, 11, '十段 prompt.md + 一份 manifest');
+  eq(pack.files.length, 12, '十段 prompt.md + manifest + voiceover manifest');
   ok(pack.files.some((f) => f.path === 'E01-01/prompt.md'), '每段一个文件夹里的 prompt.md');
+  ok(pack.files.some((f) => f.path === 'voiceover-manifest.json'), '根目录导出后期画外音清单');
   const p01 = pack.files.find((f) => f.path === 'E01-01/prompt.md');
   ok(p01.content.startsWith('# E01-01 · H3 提示词'), 'prompt.md 带标题');
   ok(p01.content.includes('生成时长 = **15.0 秒**'), 'prompt.md 明确生成时长');
@@ -563,6 +586,21 @@ eq(GATE_LOG, '.gates.jsonl', '日志文件名固定');
   ok(p01.content.includes('Audio 1 = audio/C01.wav · C01 / S1'), '音色文件只列在分隔线之前的材料区');
   const m = pack.manifest.find((x) => x.segment === 'E01-01');
   eq(m.audioReferences[0].speakerId, 'S1', 'manifest 保留音色参考元数据');
+}
+{
+  const doc = clone(FIXTURE);
+  const seg = doc.episodes[0].segments[0];
+  seg.postAudioCues = [{
+    cueId: 'E01-01-VO01', cut: 1, beat: 1, startSeconds: 0, durationSeconds: 1,
+    speaker: 'VO', speakerId: 'VO-SYSTEM', line: '测试播报', delivery: 'off-screen-system-announcement',
+    tts: { engine: 'VoxCPM', mode: 'voice-design', voicePrompt: 'neutral system voice', outputFile: 'audio/post-voiceover/E01-01-VO01.wav' },
+  }];
+  const pack = exportPack(doc, SCRIPT, { imageExists: () => true });
+  const p01 = pack.files.find((f) => f.path === 'E01-01/prompt.md');
+  ok(p01.content.includes('后期画外音（不要上传 H3）'), 'prompt.md 分隔线前明确列出后期画外音');
+  ok(p01.content.includes('audio/post-voiceover/E01-01-VO01.wav'), 'prompt.md 给出后期音频输出文件');
+  eq(pack.voiceovers.length, 1, 'voiceover manifest 汇总所有后期画外音');
+  eq(pack.manifest[0].postAudioCues.length, 1, '段 manifest 保留后期画外音元数据');
 }
 {
   const pack = exportPack(FIXTURE, SCRIPT, { imageExists: () => true, dir: 'out' });
@@ -639,7 +677,7 @@ ok(html.includes('分镜节奏带'), '01 分镜节奏带');
 ok(html.includes('分集分镜表'), '02 分集分镜表');
 ok(html.includes('生成批次单'), '03 生成批次单');
 ok(html.includes('配音对齐单'), '04 配音对齐单');
-ok(html.includes('✓ 质量门 17 / 17'), '页眉徽章全绿');
+  ok(html.includes('✓ 质量门 18 / 18'), '页眉徽章全绿');
 ok(html.includes('class="rseg"'), '节奏带按段分组（粗分隔）');
 ok(html.includes('#seg-E01-01'), '节奏带段可跳转');
 ok(html.includes('主分镜图 · #1 未生成'), '主分镜图缺图时显示占位不装有');
@@ -699,7 +737,7 @@ ok(html.includes('老周'), 'html 里 ID 换成名字');
   const en = renderHtml(FIXTURE, { ...CTX, lang: 'en' });
   ok(en.includes('<html lang="en">'), 'en 报告的 html lang 属性跟着语言走');
   ok(en.includes('Export JSON'), 'en 界面：导出按钮英文');
-  ok(en.includes('Quality gates 17 / 17'), 'en 界面：页眉徽章英文');
+  ok(en.includes('Quality gates 18 / 18'), 'en 界面：页眉徽章英文');
   ok(en.includes('Cut rhythm strip'), 'en 界面：节奏带节标题英文');
   ok(en.includes('Segment cards'), 'en 界面：分镜表节标题英文');
   ok(en.includes('Generation batches'), 'en 界面：批次节标题英文');

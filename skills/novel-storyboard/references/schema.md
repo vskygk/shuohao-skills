@@ -27,7 +27,10 @@
 | `cuts` | cut[] | 段内分镜，按时间顺序。段总秒数 = 分镜秒数之和，**不单独存**——少一处会漂的冗余 |
 | `h3Prompt` | string | **一段一条 H3 视频提示词**，正文语言跟 `promptLang`（默认英文）；可采用 I2VA 三字段或 Ref2VA 六段式，结构见 `references/h3-prompt.md` |
 | `audioReferences` | object[] | 可选。音色/音频参考的投产元数据（`audioId`、角色 ID、speaker ID、文件、用途）；文件上传顺序写在导出的 `prompt.md` 材料区，不进入 `h3Prompt` 正文。 |
+| `postAudioCues` | object[] | 可选。后期生成并混入的画外音线索；其台词不得出现在 `h3Prompt`，对应音色也不得列入本段 `audioReferences`。export 会汇总为 `voiceover-manifest.json`。 |
 | `note` | string | 备注，可选 |
+
+`postAudioCues` 每条至少包含：`cueId`、`cut`、`beat`、`startSeconds`、`durationSeconds`、`speaker`、`speakerId`、`line`、`delivery`，以及 `tts`（`engine: "VoxCPM"`、`mode`、`voicePrompt`、`outputFile`；引用音色模式再给 `referenceFile`）。`cut + beat` 必须精确认领该切内一个画外说话节拍，台词与剧本逐字一致，起点等于该切切点。后期混音参数可放在 `mix`。
 
 ## cut（分镜）
 
