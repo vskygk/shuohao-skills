@@ -1,5 +1,45 @@
 # Changelog
 
+## 2.0.0 — 五个 skill 统一升到 2.0 — 2026-09-24
+
+**五个 skill 一起从 1.x 升到 2.0.0。** 这条管线的主线是：**出图那一刻才能决定的事（用哪个模型、哪种画风、哪个画幅），全部移出 skill**，skill 只交提示词和结构化数据。有几处改动会让按 1.x 写的东西失效，所以升大版本。novel-outline 和 novel-script 本身没有破坏性变更，跟着统一编号，免得要记哪个 skill 配哪个版本。
+
+1.x 的最后状态打了标签 `v1-final`，还要用旧版的切到那个标签。
+
+### 破坏性变更与迁移
+
+| 变更 | 影响 | 怎么迁移 |
+| --- | --- | --- |
+| **三个 skill 都不再出图**（角色、美术、分镜） | 不再调用 codex 的 `$imagegen`，出图步骤和调用契约全部删掉 | 用下游工具按 `image.sheet` / `frame` 出图；`render` 用 `--images` / `--frames` 指到图所在的目录，报告照样嵌图 |
+| **画风移出 skill** | 删掉 `style` 字段、`--style` 参数、`styles` 命令、`style-presets.md` 和风格门 | JSON 里残留的 `style` 字段不报错但不再生效；视觉风格由调用方在出图、出片时统一附加 |
+| **分镜的 `frame` 改成中文、直呼角色名** | 名字指向挂上去的设定图；中文景别词（「特写」）必须写进 `frame` | 1.x 的英文 `frame` 会卡在 `frame-prompt` 和 `size-phrase` 两道门，按 `schema.md` 重写 |
+| **分镜新增必填字段** | 每段 `blocking`、`soundscape`；每镜 `shot`（Seedance 镜头正文）和六个构图字段（焦距／机位／构图／视线落点／焦点／稳定性） | 1.x 的分镜 JSON 会卡在 `composition` 和 `seedance-shot` 两道门，补齐即可 |
+| **H3 中文模式也禁角色名** | 原来中文模式放行，现在按官方规范两种模式都禁 | 中文 `h3Prompt` 里的人名改成通用身份 |
+| **镜头配方的必备短语要跟 `frame` 同语言** | `frame` 改成中文后，英文 `must_phrases` 匹配不上 | 外部配方卡库的 `must_phrases` 改成中文 |
+| **novel-characters `render --images` 的相对路径** | 原来按 cast.json 所在目录解析，现在按当前目录解析 | 在别的目录下运行时改传绝对路径，或者从 cast.json 所在目录运行 |
+
+质量门：novel-art 11 → 10 道（删风格门）；novel-storyboard 17 → 18 道（删风格短语门，新增构图量化、Seedance 镜头正文两道，并把「英文提示词」和「禁人名」两道改成新规则）。
+
+### 新增
+
+- **Seedance 与 H3 并列**（novel-storyboard）：Seedance 提示词由程序按官方结构现拼——参考图声明、段级走位、逐镜量化字段、台词 `{}`、音效 `<>`、配乐 `（）`、编号约束，模型只写每切的 `shot`。报告的提示词面板有 H3 / Seedance 两个页签；`export --protocol seedance` 出投产包（每段 `seedance.md` + 附件，根部 `seedance-manifest.json`）；全局约束用 `--constraints <文件>` 给，程序补上「无字幕」和多人同框的「禁双胞胎」
+- **提示词规范分层**：协议无关的镜头正文写法抽成 `shot-writing.md`，`h3-prompt.md` 和 `seedance-prompt.md` 只讲各自的语法
+- **素材路径都能指定**，不用把文件放进固定目录：
+  - 角色、美术、分镜的 `render --images <目录>`；
+  - 分镜 `render --frames <目录>`、`export --frames <目录>`（找到的分镜图自动拷进投产包）；
+  - 角色 `assemble --summary <文件>`、`--ui <文件>`
+- **美术加 `dynasty`**（文档级）：art.json 顶层写一个具体的真实朝代或年代，不许写「古代」「架空」
+- **角色造型规则**：族裔推不出来默认东亚，并落到能画的五官描述；身份落到服饰形制上（形制排第一，使用痕迹最多一处）；设定图画常态造型，不写场合标签；每人留一处拿掉就认不出的识别锚点
+- **场景表面处理分两档**：日常使用、持续维护——金銮殿不再掉漆
+
+### 修复与内部
+
+- **每个 skill 单独拷走也能跑自测**：自测需要的上游 JSON 拷进各自的 `references/test-fixtures/upstream/`，不再通过 `../../` 读兄弟 skill
+- 文档里的自测断言数对齐实际值
+- 项目规则从 `CLAUDE.md` 改名为 `AGENTS.md`（Claude Code v2.1.277 起直接读取）
+
+自测：outline 249、characters 337、art 151、script 154、storyboard 323，根目录组装器 92，全部通过。
+
 ## 五段报告合成一张单页 — 2026-08-19
 
 **新增 `scripts/report.mjs`：左侧导航，有哪几段就出哪几个面板**
